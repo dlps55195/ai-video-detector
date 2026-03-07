@@ -31,14 +31,13 @@ export default function AuthNav() {
     <nav className="border-b border-border bg-void/80 backdrop-blur-md sticky top-0 z-50">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-14">
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-md bg-amber-glow flex items-center justify-center">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#080A0F" strokeWidth="2.5">
-              <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.82v6.36a1 1 0 0 1-1.447.89L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
-            </svg>
-          </div>
-          <span className="font-display font-bold text-slate-100 tracking-tight">VeriFrame</span>
-        </Link>
+        <Link href="/" className="flex items-center">
+          <img
+            src="/veriframe-wordmark-dark.svg"
+            alt="VeriFrame"
+            style={{ height: '28px', width: 'auto' }}
+  />
+</Link>
 
         {/* Nav links */}
         <div className="flex items-center gap-6">

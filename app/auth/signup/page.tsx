@@ -94,14 +94,13 @@ export default function SignupPage() {
       <div className="relative w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center gap-2.5 mb-6">
-            <div className="w-8 h-8 rounded-md bg-amber-glow flex items-center justify-center">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#080A0F" strokeWidth="2.5">
-                <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.82v6.36a1 1 0 0 1-1.447.89L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
-              </svg>
-            </div>
-            <span className="font-display font-bold text-slate-100 text-lg">VeriFrame</span>
-          </Link>
+          <Link href="/" className="inline-flex items-center mb-6">
+  <img
+    src="/veriframe-wordmark-dark.svg"
+    alt="VeriFrame"
+    style={{ height: '32px', width: 'auto' }}
+  />
+</Link>
           <h1 className="font-display text-2xl font-bold text-slate-100">Create account</h1>
           <p className="text-slate-500 text-sm mt-1">Start detecting AI videos for free</p>
         </div>

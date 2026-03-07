@@ -6,6 +6,9 @@ export const metadata: Metadata = {
   description:
     'Detect AI-generated and deepfake videos with forensic-grade analysis. Upload any video and get a detailed authenticity report in seconds.',
   keywords: 'deepfake detection, AI video detector, video authenticity, fake video checker',
+  icons: {
+    icon: '/favicon.png',
+  },
   openGraph: {
     title: 'VeriFrame — AI Video Detection',
     description: 'Forensic-grade AI video authenticity analysis',
