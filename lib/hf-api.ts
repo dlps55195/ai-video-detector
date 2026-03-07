@@ -1,8 +1,12 @@
 // Hugging Face API wrapper for deepfake/AI detection
-// Uses the free inference API with the dima806/deepfake_vs_real_image_detection model
+// Multi-model approach: runs each frame through two complementary models
+// and uses a smart aggregation that doesn't let near-zero frames drown out high scores
 
-const HF_API_URL = 'https://api-inference.huggingface.co/models/dima806/deepfake_vs_real_image_detection';
-const FALLBACK_API_URL = 'https://api-inference.huggingface.co/models/prithivMLmods/Deep-Fake-Detector-v2-Model';
+// Model 1: Face deepfake / face-swap detection
+const DEEPFAKE_MODEL = 'https://router.huggingface.co/hf-inference/models/dima806/deepfake_vs_real_image_detection';
+
+// Model 2: General AI-generated image detection (catches Sora, Midjourney, DALL-E style videos)
+const AI_IMAGE_MODEL = 'https://router.huggingface.co/hf-inference/models/Organika/sdxl-detector';
 
 export interface HFPrediction {
   label: string;
@@ -17,7 +21,8 @@ export interface FrameAnalysisResult {
 }
 
 /**
- * Analyzes a single image frame (as base64 blob) for AI/deepfake detection
+ * Analyzes a single image frame against both models and returns the higher score.
+ * Using two models catches both face-swap deepfakes AND fully AI-generated content.
  */
 export async function analyzeFrame(imageBlob: Blob): Promise<FrameAnalysisResult> {
   const token = process.env.HUGGINGFACE_API_TOKEN;
@@ -28,10 +33,73 @@ export async function analyzeFrame(imageBlob: Blob): Promise<FrameAnalysisResult
 
   const arrayBuffer = await imageBlob.arrayBuffer();
 
-  // Try primary model first, then fallback
-  for (const apiUrl of [HF_API_URL, FALLBACK_API_URL]) {
-    try {
-      const response = await fetch(apiUrl, {
+  // Run both models and take the higher AI score (more sensitive = better for detection)
+  const [deepfakeResult, aiImageResult] = await Promise.allSettled([
+    queryModel(DEEPFAKE_MODEL, arrayBuffer, token),
+    queryModel(AI_IMAGE_MODEL, arrayBuffer, token),
+  ]);
+
+  const scores: number[] = [];
+  const allPredictions: HFPrediction[] = [];
+  const errors: string[] = [];
+
+  if (deepfakeResult.status === 'fulfilled' && !deepfakeResult.value.error) {
+    scores.push(deepfakeResult.value.confidenceScore);
+    allPredictions.push(...deepfakeResult.value.rawPredictions);
+  } else if (deepfakeResult.status === 'rejected') {
+    errors.push('deepfake model failed');
+  } else if (deepfakeResult.value.error) {
+    errors.push(deepfakeResult.value.error);
+  }
+
+  if (aiImageResult.status === 'fulfilled' && !aiImageResult.value.error) {
+    scores.push(aiImageResult.value.confidenceScore);
+    allPredictions.push(...aiImageResult.value.rawPredictions);
+  } else if (aiImageResult.status === 'rejected') {
+    errors.push('ai-image model failed');
+  } else if (aiImageResult.value.error) {
+    errors.push(aiImageResult.value.error);
+  }
+
+  if (scores.length === 0) {
+    return {
+      isAI: false,
+      confidenceScore: 50,
+      rawPredictions: [],
+      error: errors.join('; ') || 'All models failed',
+    };
+  }
+
+  // Take the MAX score across models — if either model is confident it's AI, trust it
+  const confidenceScore = Math.max(...scores);
+
+  return {
+    isAI: confidenceScore > 50,
+    confidenceScore,
+    rawPredictions: allPredictions,
+    error: errors.length > 0 ? errors.join('; ') : undefined,
+  };
+}
+
+async function queryModel(
+  apiUrl: string,
+  arrayBuffer: ArrayBuffer,
+  token: string
+): Promise<FrameAnalysisResult> {
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: arrayBuffer,
+    });
+
+    if (response.status === 503) {
+      // Model loading — wait and retry once
+      await new Promise((res) => setTimeout(res, 6000));
+      const retry = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -39,61 +107,42 @@ export async function analyzeFrame(imageBlob: Blob): Promise<FrameAnalysisResult
         },
         body: arrayBuffer,
       });
-
-      if (response.status === 503) {
-        // Model is loading, wait and retry once
-        await new Promise((res) => setTimeout(res, 8000));
-        const retryResponse = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/octet-stream',
-          },
-          body: arrayBuffer,
-        });
-        if (!retryResponse.ok) continue;
-        const retryData: HFPrediction[] = await retryResponse.json();
-        return parseHFResponse(retryData);
+      if (!retry.ok) {
+        return { isAI: false, confidenceScore: 50, rawPredictions: [], error: `Model unavailable (503)` };
       }
-
-      if (response.status === 429) {
-        // Rate limited — return a neutral result with note
-        return {
-          isAI: false,
-          confidenceScore: 50,
-          rawPredictions: [],
-          error: 'Rate limited by Hugging Face. Using neutral score.',
-        };
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HF API error ${response.status}: ${errorText}`);
-      }
-
-      const data: HFPrediction[] = await response.json();
-      return parseHFResponse(data);
-    } catch (err) {
-      if (apiUrl === FALLBACK_API_URL) {
-        // Both models failed — return neutral with error
-        return {
-          isAI: false,
-          confidenceScore: 50,
-          rawPredictions: [],
-          error: err instanceof Error ? err.message : 'Unknown HF API error',
-        };
-      }
-      // Try fallback
-      continue;
+      const retryData: HFPrediction[] = await retry.json();
+      return parseHFResponse(retryData);
     }
-  }
 
-  return {
-    isAI: false,
-    confidenceScore: 50,
-    rawPredictions: [],
-    error: 'All models failed',
-  };
+    if (response.status === 429) {
+      return {
+        isAI: false,
+        confidenceScore: 50,
+        rawPredictions: [],
+        error: 'Rate limited by Hugging Face.',
+      };
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        isAI: false,
+        confidenceScore: 50,
+        rawPredictions: [],
+        error: `API error ${response.status}: ${errorText.slice(0, 150)}`,
+      };
+    }
+
+    const data: HFPrediction[] = await response.json();
+    return parseHFResponse(data);
+  } catch (err) {
+    return {
+      isAI: false,
+      confidenceScore: 50,
+      rawPredictions: [],
+      error: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
 }
 
 function parseHFResponse(predictions: HFPrediction[]): FrameAnalysisResult {
@@ -101,63 +150,95 @@ function parseHFResponse(predictions: HFPrediction[]): FrameAnalysisResult {
     return { isAI: false, confidenceScore: 50, rawPredictions: [] };
   }
 
-  // Find the "fake" / "AI" label prediction
-  // Common label patterns from HF deepfake models
-  const fakeLabels = ['fake', 'deepfake', 'ai', 'artificial', 'generated', 'FAKE', 'Fake'];
-  const realLabels = ['real', 'authentic', 'genuine', 'REAL', 'Real'];
+  const fakeLabels = ['fake', 'deepfake', 'ai', 'artificial', 'generated', 'FAKE', 'Fake', 'aigenerated', 'AI-generated'];
+  const realLabels = ['real', 'authentic', 'genuine', 'REAL', 'Real', 'human', 'notai'];
 
   let fakeScore = 0;
   let realScore = 0;
 
   for (const pred of predictions) {
-    const labelLower = pred.label.toLowerCase();
-    if (fakeLabels.some((l) => labelLower.includes(l.toLowerCase()))) {
+    const labelLower = pred.label.toLowerCase().replace(/[^a-z]/g, '');
+    if (fakeLabels.some((l) => labelLower.includes(l.toLowerCase().replace(/[^a-z]/g, '')))) {
       fakeScore = Math.max(fakeScore, pred.score);
-    } else if (realLabels.some((l) => labelLower.includes(l.toLowerCase()))) {
+    } else if (realLabels.some((l) => labelLower.includes(l.toLowerCase().replace(/[^a-z]/g, '')))) {
       realScore = Math.max(realScore, pred.score);
     }
   }
 
-  // If we couldn't identify labels, use position (first is usually top prediction)
-  if (fakeScore === 0 && realScore === 0 && predictions.length >= 2) {
-    // Assume binary classification: label 0 = real, label 1 = fake (common pattern)
-    const first = predictions[0];
-    if (first.label.includes('1') || first.label.includes('fake')) {
-      fakeScore = first.score;
-    } else {
-      realScore = first.score;
-      fakeScore = 1 - first.score;
+  // Fallback: if labels unrecognized, infer from structure
+  if (fakeScore === 0 && realScore === 0) {
+    if (predictions.length >= 2) {
+      const sorted = [...predictions].sort((a, b) => b.score - a.score);
+      // Assume highest score label is the prediction; if it looks "real", invert
+      const topLabel = sorted[0].label.toLowerCase();
+      if (topLabel.includes('real') || topLabel.includes('human') || topLabel.includes('0')) {
+        realScore = sorted[0].score;
+        fakeScore = 1 - sorted[0].score;
+      } else {
+        fakeScore = sorted[0].score;
+      }
+    } else if (predictions.length === 1) {
+      fakeScore = predictions[0].score;
     }
   }
 
   const confidenceScore = Math.round(fakeScore * 100);
-  const isAI = fakeScore > 0.5;
 
   return {
-    isAI,
+    isAI: fakeScore > 0.5,
     confidenceScore,
     rawPredictions: predictions,
   };
 }
 
 /**
- * Aggregate multiple frame results into a single verdict
+ * Smart aggregation that doesn't let near-zero frames drown out high-confidence detections.
+ *
+ * Logic:
+ * - If the MAX frame score >= 70% → almost certainly AI (one damning frame is enough)
+ * - If the MAX frame score >= 50% → weighted blend of max and average
+ * - Otherwise → use average (likely real)
+ *
+ * This matches how forensic analysts think: a single clear artifact is sufficient evidence.
  */
 export function aggregateResults(frameResults: FrameAnalysisResult[]): {
   isAI: boolean;
   confidenceScore: number;
 } {
-  const validResults = frameResults.filter((r) => !r.error);
+  const validResults = frameResults.filter((r) => !r.error || r.confidenceScore !== 50);
 
   if (validResults.length === 0) {
     return { isAI: false, confidenceScore: 50 };
   }
 
-  const avgScore =
-    validResults.reduce((sum, r) => sum + r.confidenceScore, 0) / validResults.length;
+  const scores = validResults.map((r) => r.confidenceScore);
+  const maxScore = Math.max(...scores);
+  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+
+  // Sort descending, take top 3 frames
+  const top3Avg = [...scores]
+    .sort((a, b) => b - a)
+    .slice(0, 3)
+    .reduce((a, b) => a + b, 0) / Math.min(3, scores.length);
+
+  let finalScore: number;
+
+  if (maxScore >= 70) {
+    // Strong signal in at least one frame — weight heavily toward max
+    // Formula: 50% max + 30% top3avg + 20% overall avg
+    finalScore = maxScore * 0.5 + top3Avg * 0.3 + avgScore * 0.2;
+  } else if (maxScore >= 50) {
+    // Moderate signal — balanced blend
+    finalScore = maxScore * 0.35 + top3Avg * 0.35 + avgScore * 0.3;
+  } else {
+    // No strong signal — trust the average
+    finalScore = avgScore;
+  }
+
+  finalScore = Math.round(finalScore);
 
   return {
-    isAI: avgScore > 50,
-    confidenceScore: Math.round(avgScore),
+    isAI: finalScore > 45, // Slightly lower threshold since we're already weighting conservatively
+    confidenceScore: finalScore,
   };
 }

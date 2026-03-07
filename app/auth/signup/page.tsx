@@ -2,11 +2,9 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 export default function SignupPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -41,20 +39,20 @@ export default function SignupPage() {
 
       if (authError) {
         setError(authError.message);
+        setLoading(false);
         return;
       }
 
-      // If email confirmation is disabled in Supabase, session is returned immediately
+      // If email confirmation is disabled, session is returned immediately
       if (data.session) {
-        router.push('/upload');
+        window.location.href = '/upload';
         return;
       }
 
-      // Otherwise, show confirm email message
+      // Otherwise show confirm email message
       setSuccess(true);
     } catch {
       setError('An unexpected error occurred. Please try again.');
-    } finally {
       setLoading(false);
     }
   };

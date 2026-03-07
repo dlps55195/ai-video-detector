@@ -2,54 +2,46 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-const handleLogin = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError('');
-  setLoading(true);
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
 
-  console.log('Attempting login with:', email.trim());
+    try {
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
-  try {
-    const { data, error: authError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+      if (authError) {
+        setError(authError.message);
+        setLoading(false);
+        return;
+      }
 
-    console.log('Auth response:', { data, authError });
+      if (!data.session) {
+        setError('No session returned. Check email confirmation settings in Supabase.');
+        setLoading(false);
+        return;
+      }
 
-    if (authError) {
-      setError(authError.message);
-      return;
+      // Session is now stored in cookies — do a full page navigation
+      // so the server component at /upload can read the cookie.
+      window.location.href = '/upload';
+    } catch (err) {
+      console.error('Login error:', err);
+      setError('An unexpected error occurred. Please try again.');
+      setLoading(false);
     }
-
-    console.log('Session:', data.session);
-    console.log('User:', data.user);
-
-    if (!data.session) {
-      setError('No session returned — check Supabase email confirmation settings.');
-      return;
-    }
-
-    console.log('About to redirect...');
-    window.location.replace('/upload');
-    console.log('Redirect called');
-  } catch (err) {
-    console.error('Unexpected error:', err);
-    setError('An unexpected error occurred. Please try again.');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
     <div className="min-h-screen bg-void flex items-center justify-center px-4">
