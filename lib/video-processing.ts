@@ -14,18 +14,24 @@ export interface ExtractionProgress {
 }
 
 /**
- * Extracts frames from a video file at the specified interval.
- * Runs client-side — no server required, no FFmpeg.
+ * Extracts frames from a video file using a smart sampling strategy:
+ *
+ * - For videos under 60s: spread frames evenly across the whole video
+ * - For videos over 60s: sample the first 45 seconds DENSELY (where faces/subjects
+ *   appear most consistently), then take a few samples from later in the video.
+ *
+ * This avoids the problem of long edited videos where frames at the 3:00, 6:00 etc.
+ * mark are graphics, b-roll, or screen recordings rather than the main subject.
  *
  * @param file       - The video File object
- * @param interval   - Seconds between frames (default: 2)
- * @param maxFrames  - Max number of frames to extract (default: 8)
+ * @param interval   - Seconds between frames (used for short videos only)
+ * @param maxFrames  - Max number of frames to extract (default: 6)
  * @param onProgress - Optional progress callback
  */
 export async function extractFrames(
   file: File,
   interval: number = 2,
-  maxFrames: number = 8,
+  maxFrames: number = 6,
   onProgress?: (progress: ExtractionProgress) => void
 ): Promise<ExtractedFrame[]> {
   return new Promise((resolve, reject) => {
@@ -54,15 +60,43 @@ export async function extractFrames(
         return;
       }
 
-      // Calculate timestamps to extract
+      // --- Smart sampling strategy ---
       const timestamps: number[] = [];
-      const step = Math.max(interval, duration / maxFrames);
 
-      for (let t = 0; t < duration && timestamps.length < maxFrames; t += step) {
-        timestamps.push(Math.min(t, duration - 0.1));
+      if (duration <= 60) {
+        // Short video: spread evenly
+        const step = Math.max(interval, duration / maxFrames);
+        for (let t = 0; t < duration && timestamps.length < maxFrames; t += step) {
+          timestamps.push(Math.min(t, duration - 0.1));
+        }
+      } else {
+        // Long video: focus heavily on first 45 seconds
+        // This is where the primary subject (face/content) is most consistently present
+        // before editing cuts to b-roll, graphics, screen recordings etc.
+
+        // 70% of frames from the first 45 seconds
+        const earlyFrameCount = Math.round(maxFrames * 0.7);
+        const earlyWindow = Math.min(45, duration * 0.3);
+        const earlyStep = earlyWindow / earlyFrameCount;
+
+        for (let i = 0; i < earlyFrameCount; i++) {
+          timestamps.push(Math.min(i * earlyStep, duration - 0.1));
+        }
+
+        // 30% of frames spread across the rest of the video
+        const lateFrameCount = maxFrames - earlyFrameCount;
+        const lateStart = earlyWindow;
+        const lateStep = (duration - lateStart) / (lateFrameCount + 1);
+
+        for (let i = 1; i <= lateFrameCount; i++) {
+          timestamps.push(Math.min(lateStart + i * lateStep, duration - 0.1));
+        }
+
+        // Sort chronologically
+        timestamps.sort((a, b) => a - b);
       }
 
-      // Ensure we have at least 1 frame
+      // Ensure at least 1 frame
       if (timestamps.length === 0) {
         timestamps.push(0);
       }
@@ -78,9 +112,7 @@ export async function extractFrames(
           resolve(frames);
           return;
         }
-
-        const timestamp = timestamps[index];
-        video.currentTime = timestamp;
+        video.currentTime = timestamps[index];
       };
 
       video.onseeked = () => {

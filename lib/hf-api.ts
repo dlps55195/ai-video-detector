@@ -238,7 +238,7 @@ export function aggregateResults(frameResults: FrameAnalysisResult[]): {
   finalScore = Math.round(finalScore);
 
   return {
-    isAI: finalScore > 45, // Slightly lower threshold since we're already weighting conservatively
+    isAI: finalScore > 60, // Slightly lower threshold since we're already weighting conservatively
     confidenceScore: finalScore,
   };
 }
