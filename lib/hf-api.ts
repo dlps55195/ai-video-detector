@@ -192,18 +192,15 @@ function parseHFResponse(predictions: HFPrediction[]): FrameAnalysisResult {
 }
 
 /**
- * Consensus-based aggregation.
+ * Weighted-max aggregation.
  *
- * Key insight: a real AI-generated video will have CONSISTENTLY high scores across
- * most frames. A real human video might have 1-2 uncertain frames but the rest
- * will be clearly real. We exploit this by requiring multiple frames to agree.
+ * A single high-confidence frame is meaningful evidence — if the model is 70%+ sure
+ * on any frame, we weight that heavily. This catches AI videos that are only partially
+ * synthetic or where only a few frames show clear artifacts.
  *
- * Rules:
- * 1. Count how many frames scored >= 65% ("high confidence AI frames")
- * 2. If 3+ frames agree → strong AI signal, use weighted score
- * 3. If exactly 2 frames agree → moderate signal, use blended score
- * 4. If only 1 frame is high (even if 99%) → probably a false positive, use average
- * 5. If 0 frames are high → definitely real, use average
+ * - MAX >= 70%: 50% max + 30% top3avg + 20% overall avg
+ * - MAX >= 50%: 35% max + 35% top3avg + 30% overall avg
+ * - MAX < 50%:  trust the average (no strong signal anywhere)
  */
 export function aggregateResults(frameResults: FrameAnalysisResult[]): {
   isAI: boolean;
@@ -216,25 +213,20 @@ export function aggregateResults(frameResults: FrameAnalysisResult[]): {
   }
 
   const scores = validResults.map((r) => r.confidenceScore);
+  const maxScore = Math.max(...scores);
   const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-  const sortedDesc = [...scores].sort((a, b) => b - a);
-  const top3Avg = sortedDesc.slice(0, 3).reduce((a, b) => a + b, 0) / Math.min(3, scores.length);
-
-  // Count frames with strong AI signal
-  const HIGH_THRESHOLD = 65;
-  const highFrames = scores.filter((s) => s >= HIGH_THRESHOLD).length;
+  const top3Avg = [...scores]
+    .sort((a, b) => b - a)
+    .slice(0, 3)
+    .reduce((a, b) => a + b, 0) / Math.min(3, scores.length);
 
   let finalScore: number;
 
-  if (highFrames >= 3) {
-    // Strong consensus: multiple frames agree it's AI
-    finalScore = top3Avg * 0.6 + avgScore * 0.4;
-  } else if (highFrames === 2) {
-    // Moderate consensus: two frames agree, blend with average
-    finalScore = top3Avg * 0.4 + avgScore * 0.6;
+  if (maxScore >= 70) {
+    finalScore = maxScore * 0.5 + top3Avg * 0.3 + avgScore * 0.2;
+  } else if (maxScore >= 50) {
+    finalScore = maxScore * 0.35 + top3Avg * 0.35 + avgScore * 0.3;
   } else {
-    // No consensus (0 or 1 high frame): trust the average
-    // Single outlier frames are likely model noise or a non-face frame
     finalScore = avgScore;
   }
 
