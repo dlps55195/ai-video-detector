@@ -19,13 +19,15 @@ export interface HFPrediction {
 
 export interface FrameAnalysisResult {
   isAI: boolean;
-  confidenceScore: number; // 0-100
+  confidenceScore: number; // 0-100, pre-dampening
   rawPredictions: HFPrediction[];
   error?: string;
 }
 
 /**
  * Analyzes a single frame. Tries primary model first, falls back on failure.
+ * Returns raw confidence score — dampening is applied in route.ts after
+ * all frames are collected, so it can be applied uniformly.
  */
 export async function analyzeFrame(imageBlob: Blob): Promise<FrameAnalysisResult> {
   const token = process.env.HUGGINGFACE_API_TOKEN;
@@ -36,21 +38,18 @@ export async function analyzeFrame(imageBlob: Blob): Promise<FrameAnalysisResult
 
   const arrayBuffer = await imageBlob.arrayBuffer();
 
-  // Try primary first, then fallback
   for (const apiUrl of [PRIMARY_MODEL, FALLBACK_MODEL]) {
     const result = await queryModel(apiUrl, arrayBuffer, token);
 
-    // If we got a real result (not an error placeholder), return it
     if (!result.error) {
       return result;
     }
 
-    // If it's a rate limit, stop trying — return neutral
-    if (result.error?.includes('Rate limited')) {
+    // Rate limit — stop immediately, no point trying fallback
+    if (result.error.includes('Rate limited')) {
       return result;
     }
 
-    // Otherwise try fallback
     console.warn(`Model ${apiUrl} failed: ${result.error}. Trying fallback...`);
   }
 
@@ -131,13 +130,13 @@ async function queryModel(
  *   "Real"     → authentic footage
  *
  * Both "AI" and "Deepfake" count as positive detections.
+ * Returns raw score — dampening is applied in route.ts.
  */
 function parseHFResponse(predictions: HFPrediction[]): FrameAnalysisResult {
   if (!Array.isArray(predictions) || predictions.length === 0) {
     return { isAI: false, confidenceScore: 50, rawPredictions: [] };
   }
 
-  // Labels that indicate synthetic/manipulated content
   const fakeLabels = [
     'fake', 'deepfake', 'ai', 'artificial', 'generated',
     'FAKE', 'Fake', 'aigenerated', 'AI', 'Deepfake',
@@ -162,7 +161,7 @@ function parseHFResponse(predictions: HFPrediction[]): FrameAnalysisResult {
   if (fakeScore === 0 && realScore === 0) {
     const sorted = [...predictions].sort((a, b) => b.score - a.score);
     const topLabel = sorted[0].label.toLowerCase();
-    if (topLabel.includes('real') || topLabel.includes('0')) {
+    if (topLabel.includes('real') || topLabel.includes('human') || topLabel.includes('0')) {
       realScore = sorted[0].score;
       fakeScore = 1 - sorted[0].score;
     } else {
@@ -178,15 +177,19 @@ function parseHFResponse(predictions: HFPrediction[]): FrameAnalysisResult {
 }
 
 /**
- * Weighted-max aggregation.
- * A single high-confidence frame is sufficient evidence — 
- * real AI videos rarely have zero-signal frames once the right model sees them.
+ * Weighted-max aggregation with a configurable threshold.
  *
- * MAX >= 70%: 50% max + 30% top3avg + 20% overall avg
- * MAX >= 50%: 35% max + 35% top3avg + 30% overall avg
- * MAX <  50%: trust the average (no signal)
+ * threshold is passed in from route.ts based on the resolution tier —
+ * 4K content needs a much higher bar (80%) than SD content (55%).
+ *
+ * MAX >= 70%: 50% max + 30% top3avg + 20% overall avg  (strong single-frame signal)
+ * MAX >= 50%: 35% max + 35% top3avg + 30% overall avg  (moderate signal)
+ * MAX <  50%: trust the average                         (no clear signal)
  */
-export function aggregateResults(frameResults: FrameAnalysisResult[]): {
+export function aggregateResults(
+  frameResults: FrameAnalysisResult[],
+  threshold: number = 55
+): {
   isAI: boolean;
   confidenceScore: number;
 } {
@@ -216,7 +219,7 @@ export function aggregateResults(frameResults: FrameAnalysisResult[]): {
   }
 
   return {
-    isAI: Math.round(finalScore) > 55,
+    isAI: Math.round(finalScore) > threshold,
     confidenceScore: Math.round(finalScore),
   };
 }

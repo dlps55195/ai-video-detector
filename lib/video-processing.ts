@@ -14,6 +14,57 @@ export interface ExtractionProgress {
 }
 
 /**
+ * Video metadata captured during extraction.
+ * Used downstream to apply resolution/bitrate-aware confidence dampening —
+ * professional stock footage at 4K looks "too perfect" to free HF models
+ * and triggers false positives. This metadata lets us correct for that.
+ */
+export interface VideoMetadata {
+  width: number;         // native video width in pixels
+  height: number;        // native video height in pixels
+  durationSeconds: number;
+  bitrateMbps: number;   // estimated from file size / duration
+}
+
+/**
+ * Reads video resolution and estimates bitrate from a File.
+ * Call this before or alongside extractFrames — it loads metadata only,
+ * no frame extraction happens here.
+ */
+export function getVideoMetadata(file: File): Promise<VideoMetadata> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const objectUrl = URL.createObjectURL(file);
+
+    video.preload = 'metadata';
+    video.muted = true;
+
+    video.onloadedmetadata = () => {
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      const durationSeconds = video.duration;
+
+      // Estimate bitrate: fileSize(bytes) * 8 bits / duration(s) / 1,000,000 = Mbps
+      const bitrateMbps =
+        isFinite(durationSeconds) && durationSeconds > 0
+          ? (file.size * 8) / durationSeconds / 1_000_000
+          : 0;
+
+      URL.revokeObjectURL(objectUrl);
+      resolve({ width, height, durationSeconds, bitrateMbps });
+    };
+
+    video.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      // Don't hard-fail — return zeroes so the rest of the pipeline continues
+      resolve({ width: 0, height: 0, durationSeconds: 0, bitrateMbps: 0 });
+    };
+
+    video.src = objectUrl;
+  });
+}
+
+/**
  * Extracts frames from a video file at the specified interval.
  * Runs client-side — no server required, no FFmpeg.
  *
@@ -79,8 +130,7 @@ export async function extractFrames(
           return;
         }
 
-        const timestamp = timestamps[index];
-        video.currentTime = timestamp;
+        video.currentTime = timestamps[index];
       };
 
       video.onseeked = () => {

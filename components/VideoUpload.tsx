@@ -2,7 +2,13 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { supabase, type Analysis } from '@/lib/supabase';
-import { validateVideoFile, extractFrames, formatFileSize, type ExtractionProgress } from '@/lib/video-processing';
+import {
+  validateVideoFile,
+  extractFrames,
+  getVideoMetadata,
+  formatFileSize,
+  type ExtractionProgress,
+} from '@/lib/video-processing';
 import ResultsDisplay from './ResultsDisplay';
 import LoadingSpinner from './LoadingSpinner';
 
@@ -83,22 +89,25 @@ export default function VideoUpload({ userId }: { userId: string }) {
     const startTime = Date.now();
 
     try {
-      // Step 1: Extract frames
+      // Step 1: Extract frames + capture video metadata in parallel
       setProgress({ stage: 'extracting', message: 'Extracting frames...', framesTotal: 8, framesDone: 0 });
 
-      const frames = await extractFrames(
-        file,
-        2,
-        8,
-        (p: ExtractionProgress) => {
-          setProgress({
-            stage: 'extracting',
-            message: `Extracting frame ${p.current}/${p.total} at ${p.timestamp.toFixed(1)}s`,
-            framesTotal: p.total,
-            framesDone: p.current,
-          });
-        }
-      );
+      const [frames, videoMeta] = await Promise.all([
+        extractFrames(
+          file,
+          2,
+          8,
+          (p: ExtractionProgress) => {
+            setProgress({
+              stage: 'extracting',
+              message: `Extracting frame ${p.current}/${p.total} at ${p.timestamp.toFixed(1)}s`,
+              framesTotal: p.total,
+              framesDone: p.current,
+            });
+          }
+        ),
+        getVideoMetadata(file),
+      ]);
 
       if (frames.length === 0) {
         throw new Error('Could not extract frames from video. Try a different format.');
@@ -112,7 +121,7 @@ export default function VideoUpload({ userId }: { userId: string }) {
         framesDone: 0,
       });
 
-      // Build FormData with all frames
+      // Build FormData with all frames + video metadata for resolution dampening
       const formData = new FormData();
       formData.append('filename', file.name);
       formData.append('userId', userId);
@@ -121,6 +130,11 @@ export default function VideoUpload({ userId }: { userId: string }) {
         formData.append(`timestamp_${i}`, frame.timestamp.toString());
       });
       formData.append('frameCount', frames.length.toString());
+
+      // Pass video metadata so the API can apply resolution/bitrate dampening
+      formData.append('videoWidth', videoMeta.width.toString());
+      formData.append('videoHeight', videoMeta.height.toString());
+      formData.append('videoBitrateMbps', videoMeta.bitrateMbps.toFixed(2));
 
       const response = await fetch('/api/analyze-video', {
         method: 'POST',
