@@ -48,9 +48,11 @@ export async function POST(req: NextRequest) {
       }
 
       case 'invoice.payment_succeeded': {
-        const invoice = event.data.object as Stripe.Invoice;
-        if (invoice.subscription) {
-          const sub = await stripe.subscriptions.retrieve(invoice.subscription as string);
+        const invoice = event.data.object as Stripe.Invoice & {
+  subscription?: string;
+};
+if (invoice.subscription) {
+  const sub = await stripe.subscriptions.retrieve(invoice.subscription);
           await handleSubscriptionChange(sub);
         }
         break;
