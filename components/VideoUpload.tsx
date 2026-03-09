@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { supabase, type Analysis } from '@/lib/supabase';
 import {
   validateVideoFile,
@@ -10,7 +10,6 @@ import {
   type ExtractionProgress,
 } from '@/lib/video-processing';
 import ResultsDisplay from './ResultsDisplay';
-import LoadingSpinner from './LoadingSpinner';
 
 type Stage =
   | 'idle'
@@ -28,6 +27,109 @@ interface ProgressState {
   framesDone: number;
 }
 
+// ── Scan-line overlay rendered during analysis ─────────────────────────────
+function ScanningOverlay({ stage, framesDone, framesTotal }: {
+  stage: Stage;
+  framesDone: number;
+  framesTotal: number;
+}) {
+  const [scanPos, setScanPos] = useState(0);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setScanPos(p => (p >= 100 ? 0 : p + 0.7));
+      setTick(t => t + 1);
+    }, 16);
+    return () => clearInterval(id);
+  }, []);
+
+  const stageLabel =
+    stage === 'extracting' ? 'EXTRACTING FRAMES' :
+    stage === 'analyzing'  ? 'NEURAL ANALYSIS' :
+    'SAVING RESULTS';
+
+  const progressPct = framesTotal > 0 ? Math.round((framesDone / framesTotal) * 100) : Math.min(tick % 101, 99);
+
+  return (
+    <>
+      <style>{`
+        @keyframes corner-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+        @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+        .vf-corner { animation: corner-pulse 1.4s ease-in-out infinite; }
+        .vf-blink  { animation: blink 1s step-end infinite; }
+      `}</style>
+
+      {/* Scrim */}
+      <div className="absolute inset-0 bg-black/55" />
+
+      {/* CRT scanlines */}
+      <div className="absolute inset-0 pointer-events-none" style={{
+        backgroundImage: 'repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.2) 2px,rgba(0,0,0,0.2) 4px)',
+      }} />
+
+      {/* Moving scan line */}
+      <div className="absolute left-0 right-0 pointer-events-none" style={{
+        top: `${scanPos}%`,
+        height: '3px',
+        background: 'linear-gradient(to right,transparent 0%,#22d3ee 20%,#a5f3fc 50%,#22d3ee 80%,transparent 100%)',
+        boxShadow: '0 0 14px 5px rgba(34,211,238,0.35)',
+      }} />
+
+      {/* Corner brackets — TL */}
+      <div className="vf-corner absolute top-3 left-3 w-8 h-8 pointer-events-none">
+        <div className="absolute top-0 left-0 w-full h-[2px] bg-cyan-400" />
+        <div className="absolute top-0 left-0 w-[2px] h-full bg-cyan-400" />
+      </div>
+      {/* TR */}
+      <div className="vf-corner absolute top-3 right-3 w-8 h-8 pointer-events-none">
+        <div className="absolute top-0 right-0 w-full h-[2px] bg-cyan-400" />
+        <div className="absolute top-0 right-0 w-[2px] h-full bg-cyan-400" />
+      </div>
+      {/* BL */}
+      <div className="vf-corner absolute bottom-14 left-3 w-8 h-8 pointer-events-none">
+        <div className="absolute bottom-0 left-0 w-full h-[2px] bg-cyan-400" />
+        <div className="absolute bottom-0 left-0 w-[2px] h-full bg-cyan-400" />
+      </div>
+      {/* BR */}
+      <div className="vf-corner absolute bottom-14 right-3 w-8 h-8 pointer-events-none">
+        <div className="absolute bottom-0 right-0 w-full h-[2px] bg-cyan-400" />
+        <div className="absolute bottom-0 right-0 w-[2px] h-full bg-cyan-400" />
+      </div>
+
+      {/* Center crosshair */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="relative w-12 h-12 opacity-70">
+          <div className="absolute top-1/2 left-0 right-0 h-px bg-cyan-400" />
+          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-cyan-400" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 border border-cyan-400 rounded-full" />
+        </div>
+      </div>
+
+      {/* Bottom HUD */}
+      <div className="absolute bottom-0 left-0 right-0 bg-black/75 border-t border-cyan-900/50 px-4 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+          <span className="font-mono text-[10px] text-cyan-400 uppercase tracking-widest">{stageLabel}</span>
+          <span className="vf-blink font-mono text-[10px] text-cyan-400">▌</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {framesTotal > 0 && (
+            <span className="font-mono text-[10px] text-slate-500">
+              {framesDone}/{framesTotal} frames
+            </span>
+          )}
+          <div className="w-16 h-1 bg-slate-800 rounded-full overflow-hidden">
+            <div className="h-full bg-cyan-400 rounded-full transition-all duration-300" style={{ width: `${progressPct}%` }} />
+          </div>
+          <span className="font-mono text-[10px] text-cyan-400 w-7 text-right">{progressPct}%</span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
 export default function VideoUpload({ userId }: { userId: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -56,25 +158,20 @@ export default function VideoUpload({ userId }: { userId: string }) {
       setError(validation.error ?? 'Invalid file');
       return;
     }
-
     setError(null);
     setResult(null);
     setFile(selected);
-
     const url = URL.createObjectURL(selected);
     setPreviewUrl(url);
     setProgress({ stage: 'selected', message: '', framesTotal: 0, framesDone: 0 });
   }, []);
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragging(false);
-      const dropped = e.dataTransfer.files[0];
-      if (dropped) handleFile(dropped);
-    },
-    [handleFile]
-  );
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) handleFile(dropped);
+  }, [handleFile]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
@@ -83,29 +180,22 @@ export default function VideoUpload({ userId }: { userId: string }) {
 
   const runAnalysis = async () => {
     if (!file) return;
-
     setError(null);
     setResult(null);
     const startTime = Date.now();
 
     try {
-      // Step 1: Extract frames + capture video metadata in parallel
       setProgress({ stage: 'extracting', message: 'Extracting frames...', framesTotal: 8, framesDone: 0 });
 
       const [frames, videoMeta] = await Promise.all([
-        extractFrames(
-          file,
-          2,
-          8,
-          (p: ExtractionProgress) => {
-            setProgress({
-              stage: 'extracting',
-              message: `Extracting frame ${p.current}/${p.total} at ${p.timestamp.toFixed(1)}s`,
-              framesTotal: p.total,
-              framesDone: p.current,
-            });
-          }
-        ),
+        extractFrames(file, 2, 8, (p: ExtractionProgress) => {
+          setProgress({
+            stage: 'extracting',
+            message: `Extracting frame ${p.current}/${p.total}`,
+            framesTotal: p.total,
+            framesDone: p.current,
+          });
+        }),
         getVideoMetadata(file),
       ]);
 
@@ -113,15 +203,8 @@ export default function VideoUpload({ userId }: { userId: string }) {
         throw new Error('Could not extract frames from video. Try a different format.');
       }
 
-      // Step 2: Send to API for analysis
-      setProgress({
-        stage: 'analyzing',
-        message: `Analyzing ${frames.length} frames...`,
-        framesTotal: frames.length,
-        framesDone: 0,
-      });
+      setProgress({ stage: 'analyzing', message: `Analyzing ${frames.length} frames...`, framesTotal: frames.length, framesDone: 0 });
 
-      // Build FormData with all frames + video metadata for resolution dampening
       const formData = new FormData();
       formData.append('filename', file.name);
       formData.append('userId', userId);
@@ -130,16 +213,11 @@ export default function VideoUpload({ userId }: { userId: string }) {
         formData.append(`timestamp_${i}`, frame.timestamp.toString());
       });
       formData.append('frameCount', frames.length.toString());
-
-      // Pass video metadata so the API can apply resolution/bitrate dampening
       formData.append('videoWidth', videoMeta.width.toString());
       formData.append('videoHeight', videoMeta.height.toString());
       formData.append('videoBitrateMbps', videoMeta.bitrateMbps.toFixed(2));
 
-      const response = await fetch('/api/analyze-video', {
-        method: 'POST',
-        body: formData,
-      });
+      const response = await fetch('/api/analyze-video', { method: 'POST', body: formData });
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({ error: 'Analysis failed' }));
@@ -148,7 +226,6 @@ export default function VideoUpload({ userId }: { userId: string }) {
 
       const analysisData = await response.json();
 
-      // Step 3: Store in Supabase (done by API, but update UI)
       setProgress({ stage: 'storing', message: 'Saving results...', framesTotal: frames.length, framesDone: frames.length });
 
       const processingTime = Date.now() - startTime;
@@ -158,10 +235,7 @@ export default function VideoUpload({ userId }: { userId: string }) {
         video_filename: file.name,
         is_ai_generated: analysisData.is_ai_generated,
         confidence_score: analysisData.confidence_score,
-        analysis_details: {
-          ...analysisData.analysis_details,
-          processing_time_ms: processingTime,
-        },
+        analysis_details: { ...analysisData.analysis_details, processing_time_ms: processingTime },
         created_at: analysisData.created_at ?? new Date().toISOString(),
         video_url: null,
       };
@@ -177,133 +251,95 @@ export default function VideoUpload({ userId }: { userId: string }) {
 
   const isProcessing = ['extracting', 'analyzing', 'storing'].includes(progress.stage);
 
-  const progressPercent =
-    progress.framesTotal > 0
-      ? Math.round((progress.framesDone / progress.framesTotal) * 100)
-      : 0;
-
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-6">
-      {/* Upload zone */}
-      {progress.stage !== 'done' && (
-        <div>
-          {!file ? (
-            <div
-              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`
-                relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-200
-                ${dragging
-                  ? 'border-amber-glow bg-amber-glow/5 scale-[1.01]'
-                  : 'border-border hover:border-amber-glow/40 hover:bg-panel/30'
-                }
-              `}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="video/mp4,video/webm,video/quicktime,video/avi,.mp4,.webm,.mov,.avi"
-                onChange={handleInputChange}
-                className="hidden"
-              />
-              <div className="flex flex-col items-center gap-4">
-                <div className="w-16 h-16 rounded-full border border-border bg-panel flex items-center justify-center">
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="1.5">
-                    <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.82v6.36a1 1 0 0 1-1.447.89L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="font-display font-semibold text-slate-200 mb-1">
-                    Drop your video here
-                  </p>
-                  <p className="text-slate-500 text-sm">
-                    or click to browse · MP4, WebM, MOV, AVI · max 100MB
-                  </p>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="border border-border bg-surface rounded-xl overflow-hidden">
-              {/* Video preview */}
-              {previewUrl && (
-                <div className="relative bg-void aspect-video">
-                  <video
-                    src={previewUrl}
-                    controls
-                    className="w-full h-full object-contain"
-                    preload="metadata"
-                  />
-                </div>
-              )}
+    <div className="w-full max-w-2xl mx-auto space-y-4">
 
-              {/* File info */}
-              <div className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-md bg-panel border border-border flex items-center justify-center shrink-0">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="2">
-                      <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.82v6.36a1 1 0 0 1-1.447.89L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="font-mono text-xs text-slate-200 truncate max-w-xs">{file.name}</p>
-                    <p className="font-mono text-xs text-slate-500">{formatFileSize(file.size)}</p>
-                  </div>
-                </div>
-                {!isProcessing && (
-                  <button
-                    onClick={resetState}
-                    className="font-mono text-xs text-slate-500 hover:text-signal-fake transition-colors"
-                  >
-                    Remove
-                  </button>
-                )}
+      {/* Drop zone — idle only */}
+      {progress.stage === 'idle' && (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`
+            relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-200
+            ${dragging ? 'border-amber-glow bg-amber-glow/5 scale-[1.01]' : 'border-border hover:border-amber-glow/40 hover:bg-panel/30'}
+          `}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="video/mp4,video/webm,video/quicktime,video/avi,.mp4,.webm,.mov,.avi"
+            onChange={handleInputChange}
+            className="hidden"
+          />
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-16 h-16 rounded-full border border-border bg-panel flex items-center justify-center">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="1.5">
+                <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.82v6.36a1 1 0 0 1-1.447.89L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-display font-semibold text-slate-200 mb-1">Drop your video here</p>
+              <p className="text-slate-500 text-sm">or click to browse · MP4, WebM, MOV, AVI · max 100MB</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video preview — persists through selected + processing */}
+      {file && progress.stage !== 'done' && previewUrl && (
+        <div className="border border-border bg-surface rounded-xl overflow-hidden">
+          <div className="relative bg-void aspect-video">
+            <video
+              src={previewUrl}
+              className="w-full h-full object-contain"
+              preload="auto"
+              muted
+              playsInline
+              controls={progress.stage === 'selected'}
+            />
+            {isProcessing && (
+              <ScanningOverlay
+                stage={progress.stage}
+                framesDone={progress.framesDone}
+                framesTotal={progress.framesTotal}
+              />
+            )}
+          </div>
+          <div className="px-4 py-3 flex items-center justify-between border-t border-border">
+            <div className="flex items-center gap-3">
+              <div className="w-7 h-7 rounded bg-panel border border-border flex items-center justify-center shrink-0">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="2">
+                  <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.82v6.36a1 1 0 0 1-1.447.89L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-mono text-xs text-slate-300 truncate max-w-[240px]">{file.name}</p>
+                <p className="font-mono text-[10px] text-slate-600">{formatFileSize(file.size)}</p>
               </div>
             </div>
-          )}
+            {!isProcessing && (
+              <button onClick={resetState} className="font-mono text-xs text-slate-600 hover:text-signal-fake transition-colors">
+                Remove
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {/* Error */}
       {error && (
-        <div className="p-4 border border-signal-fake/30 bg-signal-fake/5 rounded-xl">
+        <div className="p-4 border border-signal-fake/30 bg-signal-fake/5 rounded-xl space-y-2">
           <p className="font-mono text-sm text-signal-fake">{error}</p>
-        </div>
-      )}
-
-      {/* Processing state */}
-      {isProcessing && (
-        <div className="border border-border bg-surface rounded-xl p-6 space-y-4">
-          <div className="flex items-center gap-3">
-            <LoadingSpinner size="sm" />
-            <span className="font-mono text-xs text-slate-400 uppercase tracking-wider">
-              {progress.stage === 'extracting' && 'Extracting Frames'}
-              {progress.stage === 'analyzing' && 'Running AI Detection'}
-              {progress.stage === 'storing' && 'Saving Results'}
-            </span>
-          </div>
-          <p className="font-mono text-xs text-slate-600">{progress.message}</p>
-
-          {progress.framesTotal > 0 && (
-            <div>
-              <div className="flex justify-between font-mono text-xs text-slate-600 mb-1.5">
-                <span>Progress</span>
-                <span>{progress.framesDone}/{progress.framesTotal}</span>
-              </div>
-              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-amber-glow rounded-full transition-all duration-300"
-                  style={{ width: `${progressPercent}%` }}
-                />
-              </div>
-            </div>
-          )}
+          <button onClick={resetState} className="font-mono text-xs text-slate-500 hover:text-slate-300 transition-colors">
+            ← Start over
+          </button>
         </div>
       )}
 
       {/* Analyze button */}
-      {file && progress.stage === 'selected' && !isProcessing && (
+      {file && progress.stage === 'selected' && (
         <button
           onClick={runAnalysis}
           className="w-full py-4 bg-amber-glow text-void font-display font-bold text-base rounded-xl hover:bg-amber-400 transition-all duration-200 glow-amber hover:scale-[1.01]"
@@ -315,7 +351,7 @@ export default function VideoUpload({ userId }: { userId: string }) {
       {/* Results */}
       {result && progress.stage === 'done' && (
         <div className="space-y-4">
-          <ResultsDisplay analysis={result} />
+          <ResultsDisplay analysis={result} previewUrl={previewUrl} />
           <div className="flex gap-3">
             <button
               onClick={resetState}
