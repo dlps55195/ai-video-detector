@@ -3,14 +3,27 @@ import { createClient } from '@supabase/supabase-js';
 import { stripe } from '@/lib/stripe';
 import Stripe from 'stripe';
 
-// Webhook needs raw body — must disable bodyParser
 export const runtime = 'nodejs';
 
-// Supabase admin client (bypasses RLS)
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// Extended types to cover fields Stripe SDK types don't expose directly
+type StripeInvoice = Stripe.Invoice & {
+  subscription?: string;
+  payment_intent?: string;
+};
+
+type StripeSubscription = Stripe.Subscription & {
+  current_period_end?: number;
+  items: {
+    data: Array<{
+      price: { id: string };
+    }>;
+  };
+};
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -29,13 +42,13 @@ export async function POST(req: NextRequest) {
     switch (event.type) {
       case 'customer.subscription.created':
       case 'customer.subscription.updated': {
-        const sub = event.data.object as Stripe.Subscription;
+        const sub = event.data.object as StripeSubscription;
         await handleSubscriptionChange(sub);
         break;
       }
 
       case 'customer.subscription.deleted': {
-        const sub = event.data.object as Stripe.Subscription;
+        const sub = event.data.object as StripeSubscription;
         await supabaseAdmin
           .from('subscriptions')
           .update({
@@ -48,18 +61,16 @@ export async function POST(req: NextRequest) {
       }
 
       case 'invoice.payment_succeeded': {
-        const invoice = event.data.object as Stripe.Invoice & {
-  subscription?: string;
-};
-if (invoice.subscription) {
-  const sub = await stripe.subscriptions.retrieve(invoice.subscription);
-          await handleSubscriptionChange(sub);
+        const invoice = event.data.object as StripeInvoice;
+        if (invoice.subscription) {
+          const sub = await stripe.subscriptions.retrieve(invoice.subscription);
+          await handleSubscriptionChange(sub as StripeSubscription);
         }
         break;
       }
 
       case 'invoice.payment_failed': {
-        const invoice = event.data.object as Stripe.Invoice;
+        const invoice = event.data.object as StripeInvoice;
         await supabaseAdmin
           .from('subscriptions')
           .update({
@@ -78,15 +89,19 @@ if (invoice.subscription) {
   }
 }
 
-async function handleSubscriptionChange(sub: Stripe.Subscription) {
+async function handleSubscriptionChange(sub: StripeSubscription) {
   const customerId = sub.customer as string;
   const priceId = sub.items.data[0]?.price.id;
 
-  // Determine plan name
   const plan =
     priceId === process.env.STRIPE_PRO_PRICE_ID ? 'pro' :
     priceId === process.env.STRIPE_UNLIMITED_PRICE_ID ? 'unlimited' :
     'unknown';
+
+  // current_period_end may be on sub directly or nested in billing_cycle_anchor
+  const periodEnd = (sub as any).current_period_end
+    ? new Date((sub as any).current_period_end * 1000).toISOString()
+    : null;
 
   await supabaseAdmin
     .from('subscriptions')
@@ -95,7 +110,7 @@ async function handleSubscriptionChange(sub: Stripe.Subscription) {
       stripe_price_id: priceId,
       status: sub.status,
       plan,
-      current_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+      ...(periodEnd ? { current_period_end: periodEnd } : {}),
       updated_at: new Date().toISOString(),
     })
     .eq('stripe_customer_id', customerId);
