@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import AuthNav from '@/components/AuthNav';
 import CheckoutModal from '@/components/CheckoutModal';
-import { PLANS } from '@/lib/stripe';
+import { PLANS } from '@/lib/plans';
 
 export default function PricingPage() {
   const [selected, setSelected] = useState<{
