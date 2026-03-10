@@ -14,8 +14,9 @@ export async function POST(req: NextRequest) {
     }
 
     const { priceId } = await req.json();
+
     if (!priceId) {
-      return NextResponse.json({ error: 'Price ID required' }, { status: 400 });
+      return NextResponse.json({ error: 'Price ID is missing. Check NEXT_PUBLIC_STRIPE_PRO_PRICE_ID and NEXT_PUBLIC_STRIPE_UNLIMITED_PRICE_ID are set in Vercel.' }, { status: 400 });
     }
 
     const userId = session.user.id;
@@ -54,15 +55,28 @@ export async function POST(req: NextRequest) {
       expand: ['latest_invoice.payment_intent'],
     });
 
-const invoice = subscription.latest_invoice as Stripe.Invoice & {
-  payment_intent: Stripe.PaymentIntent;
-};
-const paymentIntent = invoice.payment_intent;
+    const invoice = subscription.latest_invoice as Stripe.Invoice & {
+      payment_intent?: Stripe.PaymentIntent;
+    };
 
-return NextResponse.json({
-  subscriptionId: subscription.id,
-  clientSecret: paymentIntent.client_secret,
-});
+    if (!invoice) {
+      return NextResponse.json({ error: 'No invoice returned from Stripe.' }, { status: 500 });
+    }
+
+    if (!invoice.payment_intent) {
+      return NextResponse.json({ error: 'No payment intent on invoice. The subscription may already be active or the price ID is invalid.' }, { status: 500 });
+    }
+
+    const clientSecret = invoice.payment_intent.client_secret;
+
+    if (!clientSecret) {
+      return NextResponse.json({ error: 'No client secret returned. Please try again.' }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      subscriptionId: subscription.id,
+      clientSecret,
+    });
   } catch (err: any) {
     console.error('create-subscription error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
