@@ -130,7 +130,7 @@ function ScanningOverlay({ stage, framesDone, framesTotal }: {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function VideoUpload({ userId }: { userId: string }) {
+export default function VideoUpload({ userId, plan = "free" }: { userId: string; plan?: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -351,7 +351,7 @@ export default function VideoUpload({ userId }: { userId: string }) {
       {/* Results */}
       {result && progress.stage === 'done' && (
         <div className="space-y-4">
-          <ResultsDisplay analysis={result} previewUrl={previewUrl} />
+          <ResultsDisplay analysis={result} previewUrl={previewUrl} plan={plan} />
           <div className="flex gap-3">
             <button
               onClick={resetState}

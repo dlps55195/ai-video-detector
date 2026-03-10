@@ -1,4 +1,28 @@
 // Client-safe plan config — no Stripe SDK import here
+
+export type PlanKey = 'free' | 'plus' | 'pro' | 'unlimited';
+
+export const PLAN_QUOTAS: Record<PlanKey, { monthly: number; daily: number }> = {
+  free:      { monthly: 3,    daily: 3    },
+  plus:      { monthly: 50,   daily: 5    },
+  pro:       { monthly: 150,  daily: 15   },
+  unlimited: { monthly: 1000, daily: 50   },
+};
+
+// Features available per plan (used for UI gating)
+export const PLAN_FEATURES: Record<PlanKey, {
+  frameByFrame: boolean;
+  analysisHistory: boolean;
+  fullHistory: boolean;
+  priorityProcessing: boolean;
+  apiAccess: boolean;
+}> = {
+  free:      { frameByFrame: false, analysisHistory: false, fullHistory: false, priorityProcessing: false, apiAccess: false },
+  plus:      { frameByFrame: true,  analysisHistory: true,  fullHistory: false, priorityProcessing: false, apiAccess: false },
+  pro:       { frameByFrame: true,  analysisHistory: true,  fullHistory: true,  priorityProcessing: true,  apiAccess: false },
+  unlimited: { frameByFrame: true,  analysisHistory: true,  fullHistory: true,  priorityProcessing: true,  apiAccess: true  },
+};
+
 export const PLANS = {
   plus: {
     name: 'Plus',

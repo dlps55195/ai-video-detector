@@ -17,6 +17,16 @@ export default async function UploadPage() {
     redirect('/auth/login');
   }
 
+  // Fetch subscription plan for feature gating
+  const { data: sub } = await supabase
+    .from('subscriptions')
+    .select('plan, status')
+    .eq('user_id', session.user.id)
+    .single();
+
+  const plan: string =
+    sub?.status === 'active' && sub?.plan ? sub.plan : 'free';
+
   return (
     <div className="min-h-screen bg-void">
       {/* Background */}
@@ -62,7 +72,7 @@ export default async function UploadPage() {
           </div>
 
           {/* Main upload component */}
-          <VideoUpload userId={session.user.id} />
+          <VideoUpload userId={session.user.id} plan={plan} />
         </main>
       </div>
     </div>

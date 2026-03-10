@@ -6,6 +6,7 @@ import type { Analysis, FrameResult } from '@/lib/supabase';
 interface ResultsDisplayProps {
   analysis: Analysis;
   previewUrl?: string | null;
+  plan?: string;
 }
 
 // ── Animated confidence counter ────────────────────────────────────────────
@@ -26,7 +27,8 @@ function CountUp({ target, duration = 1400 }: { target: number; duration?: numbe
   return <>{value}</>;
 }
 
-export default function ResultsDisplay({ analysis, previewUrl }: ResultsDisplayProps) {
+export default function ResultsDisplay({ analysis, previewUrl, plan = 'free' }: ResultsDisplayProps) {
+  const hasFrameByFrame = plan !== 'free';
   const [revealed, setRevealed] = useState(false);
   const [stampVisible, setStampVisible] = useState(false);
 
@@ -245,7 +247,18 @@ export default function ResultsDisplay({ analysis, previewUrl }: ResultsDisplayP
       </div>
 
       {/* ── Per-frame analysis ── */}
-      {frameResults.length > 0 && (
+      {!hasFrameByFrame && frameResults.length > 0 && (
+        <div className="border border-border bg-surface rounded-xl p-5 flex items-center justify-between gap-4">
+          <div>
+            <p className="font-mono text-[10px] text-slate-400 uppercase tracking-wider mb-1">Frame-by-Frame Breakdown</p>
+            <p className="text-sm text-slate-500">Upgrade to <span className="text-amber-glow font-semibold">Plus or higher</span> to unlock per-frame analysis.</p>
+          </div>
+          <a href="/pricing" className="shrink-0 px-4 py-2 bg-amber-glow text-void font-display font-semibold text-xs rounded-lg hover:bg-amber-400 transition-colors">
+            Upgrade →
+          </a>
+        </div>
+      )}
+      {hasFrameByFrame && frameResults.length > 0 && (
         <div className="border border-border bg-surface rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <h4 className="font-mono text-[10px] text-slate-400 uppercase tracking-wider">Frame-by-Frame Breakdown</h4>
