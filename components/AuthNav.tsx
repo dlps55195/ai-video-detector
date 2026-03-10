@@ -36,8 +36,8 @@ export default function AuthNav() {
             src="/veriframe-wordmark-dark.svg"
             alt="VeriFrame"
             style={{ height: '28px', width: 'auto' }}
-  />
-</Link>
+          />
+        </Link>
 
         {/* Nav links */}
         <div className="flex items-center gap-6">
@@ -57,6 +57,12 @@ export default function AuthNav() {
                   >
                     History
                   </Link>
+                  <Link
+                    href="/pricing"
+                    className="font-mono text-xs text-slate-400 hover:text-amber-glow transition-colors uppercase tracking-wider nav-link"
+                  >
+                    Pricing
+                  </Link>
                   <button
                     onClick={handleSignOut}
                     className="font-mono text-xs text-slate-500 hover:text-signal-fake transition-colors uppercase tracking-wider"
@@ -66,6 +72,12 @@ export default function AuthNav() {
                 </>
               ) : (
                 <>
+                  <Link
+                    href="/pricing"
+                    className="font-mono text-xs text-slate-400 hover:text-amber-glow transition-colors uppercase tracking-wider nav-link"
+                  >
+                    Pricing
+                  </Link>
                   <Link
                     href="/auth/login"
                     className="font-mono text-xs text-slate-400 hover:text-slate-100 transition-colors uppercase tracking-wider"
