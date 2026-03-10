@@ -25,7 +25,8 @@ function getResolutionTier(width: number, height: number, bitrateMbps: number): 
 }
 
 // ── Quota enforcement ────────────────────────────────────────────────────────
-async function checkQuota(supabase: ReturnType<typeof createClient>, userId: string): Promise<{
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function checkQuota(supabase: any, userId: string): Promise<{
   allowed: boolean;
   plan: PlanKey;
   monthlyUsed: number;
