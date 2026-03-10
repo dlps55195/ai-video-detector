@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
-import { getStripe } from '@/lib/stripe';
+import { getStripe } from '@/lib/stripe-client';
 
 // ── Inner form (must be inside <Elements>) ─────────────────────────────────
 function CheckoutForm({
