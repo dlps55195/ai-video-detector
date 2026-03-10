@@ -39,7 +39,7 @@ async function checkQuota(supabase: ReturnType<typeof createClient>, userId: str
     .from('subscriptions')
     .select('plan, status')
     .eq('user_id', userId)
-    .single();
+    .single() as { data: { plan: string | null; status: string | null } | null };
 
   const rawPlan = (sub?.status === 'active' ? sub?.plan : null) ?? 'free';
   const plan: PlanKey = (['free','plus','pro','unlimited'] as PlanKey[]).includes(rawPlan as PlanKey)
