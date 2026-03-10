@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { stripe } from '@/lib/stripe';
-import Stripe from 'stripe';
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,13 +15,13 @@ export async function POST(req: NextRequest) {
     const { priceId } = await req.json();
 
     if (!priceId) {
-      return NextResponse.json({ error: 'Price ID is missing. Check NEXT_PUBLIC_STRIPE_PRO_PRICE_ID and NEXT_PUBLIC_STRIPE_UNLIMITED_PRICE_ID are set in Vercel.' }, { status: 400 });
+      return NextResponse.json({ error: 'Price ID missing.' }, { status: 400 });
     }
 
     const userId = session.user.id;
     const email = session.user.email!;
 
-    // Check if user already has a Stripe customer
+    // Check for existing Stripe customer
     const { data: existingSub } = await supabase
       .from('subscriptions')
       .select('stripe_customer_id')
@@ -46,37 +45,34 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Create subscription (incomplete until payment confirmed)
-    const subscription = await stripe.subscriptions.create({
+    // Step 1: Create a SetupIntent to collect card details
+    // Step 2: After card is saved, create subscription using that payment method
+    // This is more reliable than relying on invoice.payment_intent in live mode
+
+    // Create a PaymentIntent directly for the first payment
+    // then the subscription handles renewals automatically
+    const setupIntent = await stripe.setupIntents.create({
       customer: customerId,
-      items: [{ price: priceId }],
-      payment_behavior: 'default_incomplete',
-      payment_settings: { save_default_payment_method: 'on_subscription' },
-      expand: ['latest_invoice.payment_intent'],
+      payment_method_types: ['card'],
+      metadata: {
+        priceId,
+        userId,
+      },
     });
 
-    const invoice = subscription.latest_invoice as Stripe.Invoice & {
-      payment_intent?: Stripe.PaymentIntent;
-    };
-
-    if (!invoice) {
-      return NextResponse.json({ error: 'No invoice returned from Stripe.' }, { status: 500 });
+    if (!setupIntent.client_secret) {
+      return NextResponse.json({ error: 'Failed to create setup intent.' }, { status: 500 });
     }
 
-    if (!invoice.payment_intent) {
-      return NextResponse.json({ error: 'No payment intent on invoice. The subscription may already be active or the price ID is invalid.' }, { status: 500 });
-    }
-
-    const clientSecret = invoice.payment_intent.client_secret;
-
-    if (!clientSecret) {
-      return NextResponse.json({ error: 'No client secret returned. Please try again.' }, { status: 500 });
-    }
-
+    // Store the priceId so we can create the subscription after card is confirmed
     return NextResponse.json({
-      subscriptionId: subscription.id,
-      clientSecret,
+      clientSecret: setupIntent.client_secret,
+      setupIntentId: setupIntent.id,
+      customerId,
+      priceId,
+      mode: 'setup',
     });
+
   } catch (err: any) {
     console.error('create-subscription error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });

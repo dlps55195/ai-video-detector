@@ -4,17 +4,21 @@ import { useState } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { getStripe } from '@/lib/stripe-client';
 
-// ── Inner form (must be inside <Elements>) ─────────────────────────────────
+// ── Inner form ─────────────────────────────────────────────────────────────
 function CheckoutForm({
   planName,
   price,
+  setupIntentId,
+  customerId,
+  priceId,
   onSuccess,
-  onClose,
 }: {
   planName: string;
   price: number;
+  setupIntentId: string;
+  customerId: string;
+  priceId: string;
   onSuccess: () => void;
-  onClose: () => void;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -28,20 +32,37 @@ function CheckoutForm({
     setLoading(true);
     setError(null);
 
-    const { error: stripeError } = await stripe.confirmPayment({
+    // Step 1: Confirm the card setup
+    const { error: setupError } = await stripe.confirmSetup({
       elements,
+      redirect: 'if_required',
       confirmParams: {
         return_url: `${window.location.origin}/dashboard?subscription=success`,
       },
-      redirect: 'if_required',
     });
 
-    if (stripeError) {
-      setError(stripeError.message ?? 'Payment failed');
+    if (setupError) {
+      setError(setupError.message ?? 'Card setup failed');
       setLoading(false);
-    } else {
-      onSuccess();
+      return;
     }
+
+    // Step 2: Create the actual subscription using the confirmed card
+    const res = await fetch('/api/stripe/confirm-subscription', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ setupIntentId, customerId, priceId }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      setError(data.error ?? 'Failed to activate subscription');
+      setLoading(false);
+      return;
+    }
+
+    onSuccess();
   };
 
   return (
@@ -58,13 +79,8 @@ function CheckoutForm({
         </div>
       </div>
 
-      {/* Stripe Payment Element — styled to match VeriFrame dark UI */}
       <div className="rounded-lg overflow-hidden border border-border">
-        <PaymentElement
-          options={{
-            layout: 'tabs',
-          }}
-        />
+        <PaymentElement options={{ layout: 'tabs' }} />
       </div>
 
       {error && (
@@ -110,13 +126,16 @@ export default function CheckoutModal({
   priceId: string;
   onClose: () => void;
 }) {
-  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [setupData, setSetupData] = useState<{
+    clientSecret: string;
+    setupIntentId: string;
+    customerId: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  // Kick off subscription creation when modal opens
-  const initSubscription = async () => {
+  const initSetup = async () => {
     setLoading(true);
     setError(null);
     try {
@@ -126,8 +145,12 @@ export default function CheckoutModal({
         body: JSON.stringify({ priceId }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Failed to create subscription');
-      setClientSecret(data.clientSecret);
+      if (!res.ok) throw new Error(data.error ?? 'Failed to initialize checkout');
+      setSetupData({
+        clientSecret: data.clientSecret,
+        setupIntentId: data.setupIntentId,
+        customerId: data.customerId,
+      });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -135,12 +158,10 @@ export default function CheckoutModal({
     }
   };
 
-  // Auto-init on mount
-  if (!clientSecret && !loading && !error) {
-    initSubscription();
+  if (!setupData && !loading && !error) {
+    initSetup();
   }
 
-  // Stripe Elements appearance matching VeriFrame dark theme
   const appearance = {
     theme: 'night' as const,
     variables: {
@@ -151,46 +172,22 @@ export default function CheckoutModal({
       colorDanger: '#ef4444',
       fontFamily: 'ui-monospace, monospace',
       borderRadius: '8px',
-      spacingUnit: '4px',
     },
     rules: {
-      '.Input': {
-        backgroundColor: '#1a1d27',
-        border: '1px solid #2a2d3a',
-        color: '#e2e8f0',
-      },
-      '.Input:focus': {
-        border: '1px solid #F59E0B',
-        boxShadow: '0 0 0 1px #F59E0B',
-      },
-      '.Label': {
-        color: '#94a3b8',
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '11px',
-        textTransform: 'uppercase',
-        letterSpacing: '0.08em',
-      },
-      '.Tab': {
-        backgroundColor: '#1a1d27',
-        border: '1px solid #2a2d3a',
-        color: '#94a3b8',
-      },
-      '.Tab--selected': {
-        backgroundColor: '#1e2130',
-        border: '1px solid #F59E0B',
-        color: '#F59E0B',
-      },
+      '.Input': { backgroundColor: '#1a1d27', border: '1px solid #2a2d3a', color: '#e2e8f0' },
+      '.Input:focus': { border: '1px solid #F59E0B', boxShadow: '0 0 0 1px #F59E0B' },
+      '.Label': { color: '#94a3b8', fontFamily: 'ui-monospace, monospace', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em' },
+      '.Tab': { backgroundColor: '#1a1d27', border: '1px solid #2a2d3a', color: '#94a3b8' },
+      '.Tab--selected': { backgroundColor: '#1e2130', border: '1px solid #F59E0B', color: '#F59E0B' },
     },
   };
 
   return (
-    // Backdrop
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="w-full max-w-md bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl">
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-glow animate-pulse" />
@@ -198,7 +195,7 @@ export default function CheckoutModal({
           </div>
           <button
             onClick={onClose}
-            className="w-7 h-7 rounded-full bg-panel border border-border flex items-center justify-center text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors font-mono text-sm"
+            className="w-7 h-7 rounded-full bg-panel border border-border flex items-center justify-center text-slate-500 hover:text-slate-300 transition-colors font-mono text-sm"
           >
             ×
           </button>
@@ -207,9 +204,7 @@ export default function CheckoutModal({
         <div className="p-6">
           {success ? (
             <div className="text-center py-8 space-y-3">
-              <div className="w-14 h-14 rounded-full bg-signal-real/10 border border-signal-real/30 flex items-center justify-center mx-auto text-2xl">
-                ✓
-              </div>
+              <div className="w-14 h-14 rounded-full bg-signal-real/10 border border-signal-real/30 flex items-center justify-center mx-auto text-2xl">✓</div>
               <h3 className="font-display text-xl font-bold text-signal-real">Payment Successful</h3>
               <p className="font-mono text-xs text-slate-500">Your subscription is now active.</p>
               <button
@@ -230,23 +225,22 @@ export default function CheckoutModal({
           ) : error ? (
             <div className="space-y-4">
               <p className="font-mono text-sm text-signal-fake">{error}</p>
-              <button
-                onClick={initSubscription}
-                className="font-mono text-xs text-amber-glow hover:text-amber-400 transition-colors"
-              >
+              <button onClick={initSetup} className="font-mono text-xs text-amber-glow hover:text-amber-400 transition-colors">
                 Try again →
               </button>
             </div>
-          ) : clientSecret ? (
+          ) : setupData ? (
             <Elements
               stripe={getStripe()}
-              options={{ clientSecret, appearance }}
+              options={{ clientSecret: setupData.clientSecret, appearance }}
             >
               <CheckoutForm
                 planName={planName}
                 price={price}
+                setupIntentId={setupData.setupIntentId}
+                customerId={setupData.customerId}
+                priceId={priceId}
                 onSuccess={() => setSuccess(true)}
-                onClose={onClose}
               />
             </Elements>
           ) : null}
