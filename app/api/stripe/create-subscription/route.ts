@@ -54,15 +54,15 @@ export async function POST(req: NextRequest) {
       expand: ['latest_invoice.payment_intent'],
     });
 
-    const invoice = subscription.latest_invoice as Stripe.Invoice & {
+const invoice = subscription.latest_invoice as Stripe.Invoice & {
   payment_intent: Stripe.PaymentIntent;
 };
 const paymentIntent = invoice.payment_intent;
 
-    return NextResponse.json({
-      subscriptionId: subscription.id,
-      clientSecret: paymentIntent.client_secret,
-    });
+return NextResponse.json({
+  subscriptionId: subscription.id,
+  clientSecret: paymentIntent.client_secret,
+});
   } catch (err: any) {
     console.error('create-subscription error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
