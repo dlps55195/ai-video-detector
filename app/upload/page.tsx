@@ -22,10 +22,33 @@ export default async function UploadPage() {
     .from('subscriptions')
     .select('plan, status')
     .eq('user_id', session.user.id)
-    .single();
+    .single() as { data: { plan: string | null; status: string | null } | null };
 
   const plan: string =
     sub?.status === 'active' && sub?.plan ? sub.plan : 'free';
+
+  // Fetch current usage counts for the quota indicator
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+
+  const [{ count: monthlyUsed }, { count: dailyUsed }] = await Promise.all([
+    supabase
+      .from('analyses')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', session.user.id)
+      .gte('created_at', startOfMonth),
+    supabase
+      .from('analyses')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', session.user.id)
+      .gte('created_at', startOfDay),
+  ]);
+
+  const initialQuota = {
+    monthlyUsed: monthlyUsed ?? 0,
+    dailyUsed: dailyUsed ?? 0,
+  };
 
   return (
     <div className="min-h-screen bg-void">
@@ -72,7 +95,7 @@ export default async function UploadPage() {
           </div>
 
           {/* Main upload component */}
-          <VideoUpload userId={session.user.id} plan={plan} />
+          <VideoUpload userId={session.user.id} plan={plan} initialQuota={initialQuota} />
         </main>
       </div>
     </div>

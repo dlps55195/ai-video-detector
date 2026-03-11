@@ -130,7 +130,11 @@ function ScanningOverlay({ stage, framesDone, framesTotal }: {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function VideoUpload({ userId, plan = "free" }: { userId: string; plan?: string }) {
+export default function VideoUpload({ userId, plan = "free", initialQuota }: {
+  userId: string;
+  plan?: string;
+  initialQuota?: { monthlyUsed: number; dailyUsed: number };
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -144,11 +148,26 @@ export default function VideoUpload({ userId, plan = "free" }: { userId: string;
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Quota state ─────────────────────────────────────────────────────────
+  const PLAN_LIMITS: Record<string, { monthly: number; daily: number }> = {
+    free:      { monthly: 3,    daily: 3    },
+    plus:      { monthly: 50,   daily: 5    },
+    pro:       { monthly: 150,  daily: 15   },
+    unlimited: { monthly: 1000, daily: 50   },
+  };
+  const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+  const [quota, setQuota] = useState({
+    monthlyUsed: initialQuota?.monthlyUsed ?? 0,
+    dailyUsed:   initialQuota?.dailyUsed   ?? 0,
+  });
+  const [quotaExceeded, setQuotaExceeded] = useState<{ reason: string } | null>(null);
+
   const resetState = () => {
     setFile(null);
     setPreviewUrl(null);
     setResult(null);
     setError(null);
+    setQuotaExceeded(null);
     setProgress({ stage: 'idle', message: '', framesTotal: 0, framesDone: 0 });
   };
 
@@ -221,6 +240,11 @@ export default function VideoUpload({ userId, plan = "free" }: { userId: string;
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({ error: 'Analysis failed' }));
+        if (response.status === 429 && errData.code === 'QUOTA_EXCEEDED') {
+          setQuotaExceeded({ reason: errData.error ?? 'Limit reached' });
+          setProgress({ stage: 'error', message: '', framesTotal: 0, framesDone: 0 });
+          return;
+        }
         throw new Error(errData.error ?? `Server error ${response.status}`);
       }
 
@@ -240,6 +264,12 @@ export default function VideoUpload({ userId, plan = "free" }: { userId: string;
         video_url: null,
       };
 
+      // Update local quota counts from API response
+      if (analysisData.quota) {
+        setQuota({ monthlyUsed: analysisData.quota.monthlyUsed, dailyUsed: analysisData.quota.dailyUsed });
+      } else {
+        setQuota(q => ({ monthlyUsed: q.monthlyUsed + 1, dailyUsed: q.dailyUsed + 1 }));
+      }
       setResult(analysisRecord);
       setProgress({ stage: 'done', message: 'Analysis complete', framesTotal: frames.length, framesDone: frames.length });
     } catch (err) {
@@ -253,6 +283,77 @@ export default function VideoUpload({ userId, plan = "free" }: { userId: string;
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-4">
+
+      {/* ── Quota exceeded modal ── */}
+      {quotaExceeded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-surface border border-signal-fake/40 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-signal-fake/10 border border-signal-fake/30 flex items-center justify-center shrink-0">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-slate-100 text-base">Detection limit reached</h3>
+                <p className="font-mono text-xs text-slate-500 capitalize">{plan} plan</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-400">{quotaExceeded.reason}</p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setQuotaExceeded(null)}
+                className="flex-1 py-2.5 border border-border text-slate-400 font-display text-sm rounded-lg hover:border-slate-500 transition-colors"
+              >
+                Dismiss
+              </button>
+              <a
+                href="/pricing"
+                className="flex-1 py-2.5 bg-amber-glow text-void font-display font-bold text-sm rounded-lg hover:bg-amber-400 transition-colors text-center"
+              >
+                Upgrade Plan →
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Usage indicator ── */}
+      <div className="border border-border bg-surface rounded-xl px-4 py-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[10px] text-slate-500 uppercase tracking-wider">Monthly usage</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] text-slate-400">
+              {quota.monthlyUsed} / {limits.monthly}
+            </span>
+            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded border border-border text-slate-500 uppercase">{plan}</span>
+          </div>
+        </div>
+        <div className="w-full h-1.5 bg-panel rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{
+              width: `${Math.min((quota.monthlyUsed / limits.monthly) * 100, 100)}%`,
+              background: quota.monthlyUsed >= limits.monthly
+                ? '#ef4444'
+                : quota.monthlyUsed / limits.monthly > 0.8
+                ? '#f59e0b'
+                : '#22c55e',
+            }}
+          />
+        </div>
+        {quota.dailyUsed >= limits.daily && (
+          <p className="font-mono text-[10px] text-signal-fake">
+            Daily limit reached ({limits.daily}/day) · resets at midnight
+          </p>
+        )}
+        {plan === 'free' && quota.monthlyUsed >= limits.monthly * 0.67 && quota.monthlyUsed < limits.monthly && (
+          <p className="font-mono text-[10px] text-amber-glow">
+            {limits.monthly - quota.monthlyUsed} detection{limits.monthly - quota.monthlyUsed !== 1 ? 's' : ''} left this month ·{' '}
+            <a href="/pricing" className="underline hover:text-amber-400">Upgrade</a>
+          </p>
+        )}
+      </div>
 
       {/* Drop zone — idle only */}
       {progress.stage === 'idle' && (
