@@ -117,14 +117,26 @@ export async function POST(req: NextRequest) {
 
     const supabase = getSupabaseAdmin();
 
+    // ── Admin bypass — skip quota for dev/testing ──────────────────────────
+    const adminSecret = formData.get('adminSecret') as string | null;
+    const isAdmin = adminSecret &&
+      process.env.ADMIN_SECRET &&
+      adminSecret === process.env.ADMIN_SECRET;
+
     // ── Enforce quota ──────────────────────────────────────────────────────
-    const quota = await checkQuota(supabase, userId);
-    if (!quota.allowed) {
-      return NextResponse.json(
-        { error: quota.reason, code: 'QUOTA_EXCEEDED', quota },
-        { status: 429 }
-      );
+    if (!isAdmin) {
+      const quota = await checkQuota(supabase, userId);
+      if (!quota.allowed) {
+        return NextResponse.json(
+          { error: quota.reason, code: 'QUOTA_EXCEEDED', quota },
+          { status: 429 }
+        );
+      }
     }
+
+    const quota = isAdmin
+      ? { plan: 'unlimited' as const, monthlyUsed: 0, dailyUsed: 0, monthlyLimit: 9999, dailyLimit: 9999 }
+      : await checkQuota(supabase, userId);
 
     // Extract frames
     const frames: { blob: Blob; timestamp: number }[] = [];

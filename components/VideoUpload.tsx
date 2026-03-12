@@ -147,6 +147,8 @@ export default function VideoUpload({ userId, plan = "free", initialQuota }: {
   const [result, setResult] = useState<Analysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [adminSecret, setAdminSecret] = useState('');
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
 
   // ── Quota state ─────────────────────────────────────────────────────────
   const PLAN_LIMITS: Record<string, { monthly: number; daily: number }> = {
@@ -235,6 +237,7 @@ export default function VideoUpload({ userId, plan = "free", initialQuota }: {
       formData.append('videoWidth', videoMeta.width.toString());
       formData.append('videoHeight', videoMeta.height.toString());
       formData.append('videoBitrateMbps', videoMeta.bitrateMbps.toFixed(2));
+      if (adminSecret) formData.append('adminSecret', adminSecret);
 
       const response = await fetch('/api/analyze-video', { method: 'POST', body: formData });
 
@@ -435,6 +438,40 @@ export default function VideoUpload({ userId, plan = "free", initialQuota }: {
           <p className="font-mono text-sm text-signal-fake">{error}</p>
           <button onClick={resetState} className="font-mono text-xs text-slate-500 hover:text-slate-300 transition-colors">
             ← Start over
+          </button>
+        </div>
+      )}
+
+      {/* Admin dev bypass */}
+      {!adminUnlocked ? (
+        <div className="flex gap-2">
+          <input
+            type="password"
+            placeholder="Dev password (optional)"
+            value={adminSecret}
+            onChange={e => setAdminSecret(e.target.value)}
+            className="flex-1 px-3 py-2 bg-surface border border-border rounded-lg font-mono text-xs text-slate-400 placeholder-slate-600 focus:outline-none focus:border-amber-glow/40"
+          />
+          {adminSecret && (
+            <button
+              onClick={() => setAdminUnlocked(true)}
+              className="px-4 py-2 border border-amber-glow/40 text-amber-glow font-mono text-xs rounded-lg hover:bg-amber-glow/10 transition-colors"
+            >
+              Unlock
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="flex items-center justify-between px-3 py-2 bg-amber-glow/10 border border-amber-glow/30 rounded-lg">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-glow animate-pulse" />
+            <span className="font-mono text-xs text-amber-glow">DEV MODE — rate limits bypassed</span>
+          </div>
+          <button
+            onClick={() => { setAdminUnlocked(false); setAdminSecret(''); }}
+            className="font-mono text-xs text-slate-600 hover:text-signal-fake transition-colors"
+          >
+            Lock
           </button>
         </div>
       )}
