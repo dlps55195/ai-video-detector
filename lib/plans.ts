@@ -3,10 +3,10 @@
 export type PlanKey = 'free' | 'plus' | 'pro' | 'unlimited';
 
 export const PLAN_QUOTAS: Record<PlanKey, { monthly: number; daily: number }> = {
-  free:      { monthly: 3,    daily: 3    },
-  plus:      { monthly: 50,   daily: 5    },
-  pro:       { monthly: 150,  daily: 15   },
-  unlimited: { monthly: 1000, daily: 50   },
+  free:      { monthly: 3,    daily: 9999 },
+  plus:      { monthly: 50,   daily: 9999 },
+  pro:       { monthly: 150,  daily: 9999 },
+  unlimited: { monthly: 1000, daily: 9999 },
 };
 
 // Features available per plan (used for UI gating)

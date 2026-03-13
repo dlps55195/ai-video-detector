@@ -81,14 +81,6 @@ async function checkQuota(supabase: any, userId: string): Promise<{
     };
   }
 
-  if (daily >= quota.daily) {
-    return {
-      allowed: false, plan, monthlyUsed: monthly, dailyUsed: daily,
-      monthlyLimit: quota.monthly, dailyLimit: quota.daily,
-      reason: `Daily limit reached (${daily}/${quota.daily}). Come back tomorrow or upgrade your plan.`,
-    };
-  }
-
   return {
     allowed: true, plan, monthlyUsed: monthly, dailyUsed: daily,
     monthlyLimit: quota.monthly, dailyLimit: quota.daily,
